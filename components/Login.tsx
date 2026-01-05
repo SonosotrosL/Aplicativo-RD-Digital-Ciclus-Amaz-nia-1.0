@@ -1,14 +1,10 @@
 
 import React, { useState } from 'react';
-import { authenticate } from '../services/storageService';
-import { User } from '../types';
+import { useAuth } from '../context/AuthContext';
 import { LogIn, Loader2 } from 'lucide-react';
 
-interface LoginProps {
-  onLogin: (user: User) => void;
-}
-
-export const Login: React.FC<LoginProps> = ({ onLogin }) => {
+export const Login: React.FC = () => {
+  const { signIn } = useAuth();
   const [reg, setReg] = useState('');
   const [pass, setPass] = useState('');
   const [error, setError] = useState('');
@@ -18,14 +14,15 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
     e.preventDefault();
     setError('');
     setLoading(true);
-    
-    const user = await authenticate(reg, pass);
-    if (user) {
-      onLogin(user);
-    } else {
-      setError('Matrícula ou senha inválidos, ou erro de conexão.');
+
+    // In a real scenario, this would check credentials against Supabase
+    const { error: signInError } = await signIn(reg, pass);
+
+    if (signInError) {
+      setError('Erro ao entrar: ' + signInError);
+      setLoading(false);
     }
-    setLoading(false);
+    // Success is handled by AuthContext state change redirecting to Dashboard
   };
 
   return (
@@ -43,7 +40,7 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
               {error}
             </div>
           )}
-          
+
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Matrícula</label>
             <input

@@ -66,7 +66,7 @@ export interface GeoLocation {
   lng: number;
   accuracy?: number;
   timestamp: number;
-  addressFromGPS?: string; 
+  addressFromGPS?: string;
 }
 
 export interface TrackSegment {
@@ -79,17 +79,17 @@ export interface TrackSegment {
   distance: number;
   width?: number;
   calculatedValue: number;
-  pathPoints: {lat: number, lng: number}[];
+  pathPoints: { lat: number, lng: number }[];
 }
 
 export interface GeoPath {
-  startedAt: string; 
-  endedAt?: string; 
+  startedAt: string;
+  endedAt?: string;
   startLocation: GeoLocation;
   endLocation?: GeoLocation;
   totalDistanceMeters: number;
   durationSeconds: number;
-  points: {lat: number, lng: number}[]; 
+  points: { lat: number, lng: number }[];
 }
 
 export interface Employee {
@@ -128,12 +128,15 @@ export interface RDData {
   location?: GeoLocation;
   segments: TrackSegment[];
   teamAttendance: AttendanceRecord[];
-  
+
+  foremanTeam?: string;
+  supervisorTeam?: string;
+
   // 3-photo proof system
   workPhotoInitial?: string;
   workPhotoProgress?: string;
   workPhotoFinal?: string;
-  
+
   workPhotoUrl?: string; // Legacy
   signatureImageUrl?: string;
   observations?: string;

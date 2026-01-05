@@ -1,7 +1,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { Employee, User, UserRole, TEAMS } from '../types';
-import { getEmployees, saveEmployee, deleteEmployee, getExistingRoles, getUsers, saveUser, deleteUser } from '../services/storageService';
+import { EmployeeService } from '../services/supabase/EmployeeService';
+import { UserService } from '../services/supabase/UserService';
 import { Plus, Trash2, Save, User as UserIcon, Briefcase, Shield, AlertTriangle, Check, X, Loader2, Pencil, XCircle } from 'lucide-react';
 
 interface AdminPanelProps {
@@ -11,7 +12,7 @@ interface AdminPanelProps {
 export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
   const [activeTab, setActiveTab] = useState<'employees' | 'users'>('employees');
   const [loading, setLoading] = useState(false);
-  
+
   // Employees State
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [isAddingEmp, setIsAddingEmp] = useState(false);
@@ -25,7 +26,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
   const [users, setUsers] = useState<User[]>([]);
   const [isAddingUser, setIsAddingUser] = useState(false);
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
-  
+
   const [newUserName, setNewUserName] = useState('');
   const [newUserReg, setNewUserReg] = useState('');
   const [newUserPass, setNewUserPass] = useState('');
@@ -39,11 +40,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
 
   const refreshData = async () => {
     setLoading(true);
-    const emps = await getEmployees();
+    const emps = await EmployeeService.getEmployees();
     setEmployees(emps);
-    const roles = await getExistingRoles();
+    const roles = await EmployeeService.getExistingRoles();
     setAvailableRoles(roles);
-    const usrs = await getUsers();
+    const usrs = await UserService.getUsers();
     setUsers(usrs);
     setLoading(false);
   };
@@ -54,13 +55,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
     e.preventDefault();
     setLoading(true);
     const newEmp: Employee = {
-      id: ``, 
+      id: ``, // Service handles ID
       name: newEmpName,
       registration: newEmpReg,
       role: newEmpRole,
-      supervisorId: currentUser.id 
+      supervisorId: currentUser.id
     };
-    await saveEmployee(newEmp);
+    await EmployeeService.saveEmployee(newEmp);
     await refreshData();
     setIsAddingEmp(false);
     setNewEmpName('');
@@ -71,7 +72,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
 
   const handleConfirmDeleteEmployee = async (id: string) => {
     setLoading(true);
-    await deleteEmployee(id);
+    await EmployeeService.deleteEmployee(id);
     await refreshData();
     setDeletingEmpId(null);
     setLoading(false);
@@ -80,33 +81,33 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
   // --- User Logic ---
 
   const handleEditUser = (user: User) => {
-      setEditingUserId(user.id);
-      setNewUserName(user.name);
-      setNewUserReg(user.registration);
-      setNewUserPass(user.password || '');
-      setNewUserRole(user.role);
-      setNewUserTeam(user.team || '');
-      setIsAddingUser(true);
-      
-      // Scroll to form
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+    setEditingUserId(user.id);
+    setNewUserName(user.name);
+    setNewUserReg(user.registration);
+    setNewUserPass(''); // Don't show password
+    setNewUserRole(user.role);
+    setNewUserTeam(user.team || '');
+    setIsAddingUser(true);
+
+    // Scroll to form
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const resetUserForm = () => {
-      setEditingUserId(null);
-      setIsAddingUser(false);
-      setNewUserName('');
-      setNewUserReg('');
-      setNewUserPass('');
-      setNewUserRole(UserRole.ENCARREGADO);
-      setNewUserTeam('');
+    setEditingUserId(null);
+    setIsAddingUser(false);
+    setNewUserName('');
+    setNewUserReg('');
+    setNewUserPass('');
+    setNewUserRole(UserRole.ENCARREGADO);
+    setNewUserTeam('');
   };
 
   const handleSaveUser = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     const userToSave: User = {
-      id: editingUserId || ``, 
+      id: editingUserId || ``,
       name: newUserName,
       registration: newUserReg,
       password: newUserPass,
@@ -114,42 +115,46 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
       team: newUserTeam || undefined
     };
     try {
-        await saveUser(userToSave);
-        await refreshData();
-        resetUserForm();
-    } catch(e) {
-        alert("Erro ao salvar usuário.");
+      await UserService.saveUser(userToSave);
+      await refreshData();
+      resetUserForm();
+    } catch (e: any) {
+      alert("Erro ao salvar usuário: " + (e.message || "Erro desconhecido"));
     }
     setLoading(false);
   };
 
   const handleConfirmDeleteUser = async (id: string) => {
+    if (!confirm("Tem certeza? Esta ação requer permissões especiais e pode falhar se não configurada.")) return;
+
     setLoading(true);
-    await deleteUser(id);
-    await refreshData();
+    const success = await UserService.deleteUser(id);
+    if (success) await refreshData();
+    else alert("Não foi possível excluir o usuário. (Requer funcão delete-user)");
+
     setDeletingUserId(null);
     setLoading(false);
   };
 
   return (
     <div className="bg-white rounded-lg shadow-sm overflow-hidden relative min-h-[400px]">
-      
+
       {loading && (
-          <div className="absolute inset-0 bg-white/50 z-50 flex items-center justify-center">
-              <Loader2 className="w-8 h-8 text-ciclus-600 animate-spin" />
-          </div>
+        <div className="absolute inset-0 bg-white/50 z-50 flex items-center justify-center">
+          <Loader2 className="w-8 h-8 text-ciclus-600 animate-spin" />
+        </div>
       )}
 
       {/* Tab Navigation */}
       <div className="flex border-b border-gray-200">
-        <button 
+        <button
           onClick={() => setActiveTab('employees')}
           className={`flex-1 py-4 text-sm font-bold flex items-center justify-center gap-2 ${activeTab === 'employees' ? 'bg-white text-ciclus-600 border-b-2 border-ciclus-600' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'}`}
         >
           <Briefcase className="w-4 h-4" /> Banco de Colaboradores
         </button>
         {currentUser.role === UserRole.CCO && (
-          <button 
+          <button
             onClick={() => setActiveTab('users')}
             className={`flex-1 py-4 text-sm font-bold flex items-center justify-center gap-2 ${activeTab === 'users' ? 'bg-white text-purple-600 border-b-2 border-purple-600' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'}`}
           >
@@ -163,7 +168,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
         <div>
           <div className="p-4 bg-gray-50 border-b border-gray-100 flex justify-between items-center">
             <p className="text-xs text-gray-500">Cadastre os funcionários para preencher a lista de presença automaticamente.</p>
-            <button 
+            <button
               onClick={() => setIsAddingEmp(!isAddingEmp)}
               className="bg-ciclus-600 text-white px-3 py-1.5 rounded text-sm font-medium flex items-center gap-1 hover:bg-ciclus-700 transition-colors"
             >
@@ -183,13 +188,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
               </div>
               <div>
                 <label className="text-[10px] font-bold text-blue-800 uppercase">Função/Cargo</label>
-                <input 
-                  list="roles-list" 
-                  required 
-                  className="w-full text-sm p-2 rounded border border-blue-200" 
-                  value={newEmpRole} 
-                  onChange={e => setNewEmpRole(e.target.value)} 
-                  placeholder="Selecione ou digite..." 
+                <input
+                  list="roles-list"
+                  required
+                  className="w-full text-sm p-2 rounded border border-blue-200"
+                  value={newEmpRole}
+                  onChange={e => setNewEmpRole(e.target.value)}
+                  placeholder="Selecione ou digite..."
                 />
                 <datalist id="roles-list">
                   {availableRoles.map(r => <option key={r} value={r} />)}
@@ -213,29 +218,29 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
               </thead>
               <tbody>
                 {employees.length === 0 ? (
-                    <tr><td colSpan={4} className="text-center py-8 text-gray-400">Nenhum colaborador encontrado.</td></tr>
+                  <tr><td colSpan={4} className="text-center py-8 text-gray-400">Nenhum colaborador encontrado.</td></tr>
                 ) : (
-                    employees.map(emp => (
-                        <tr key={emp.id} className="border-b hover:bg-gray-50">
-                            <td className="px-4 py-3 font-medium text-gray-900">{emp.name}</td>
-                            <td className="px-4 py-3 font-mono text-xs">{emp.registration}</td>
-                            <td className="px-4 py-3">
-                              <span className="bg-gray-100 px-2 py-1 rounded text-xs">{emp.role}</span>
-                            </td>
-                            <td className="px-4 py-3 text-right">
-                                {deletingEmpId === emp.id ? (
-                                    <div className="flex gap-2 justify-end">
-                                        <button onClick={() => setDeletingEmpId(null)} className="text-xs text-gray-500 hover:underline">Cancelar</button>
-                                        <button onClick={() => handleConfirmDeleteEmployee(emp.id)} className="bg-red-600 text-white px-2 py-1 rounded text-xs font-bold hover:bg-red-700">Confirmar</button>
-                                    </div>
-                                ) : (
-                                    <button onClick={() => setDeletingEmpId(emp.id)} className="text-red-500 hover:bg-red-50 p-1.5 rounded transition-colors">
-                                        <Trash2 className="w-4 h-4" />
-                                    </button>
-                                )}
-                            </td>
-                        </tr>
-                    ))
+                  employees.map(emp => (
+                    <tr key={emp.id} className="border-b hover:bg-gray-50">
+                      <td className="px-4 py-3 font-medium text-gray-900">{emp.name}</td>
+                      <td className="px-4 py-3 font-mono text-xs">{emp.registration}</td>
+                      <td className="px-4 py-3">
+                        <span className="bg-gray-100 px-2 py-1 rounded text-xs">{emp.role}</span>
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        {deletingEmpId === emp.id ? (
+                          <div className="flex gap-2 justify-end">
+                            <button onClick={() => setDeletingEmpId(null)} className="text-xs text-gray-500 hover:underline">Cancelar</button>
+                            <button onClick={() => handleConfirmDeleteEmployee(emp.id)} className="bg-red-600 text-white px-2 py-1 rounded text-xs font-bold hover:bg-red-700">Confirmar</button>
+                          </div>
+                        ) : (
+                          <button onClick={() => setDeletingEmpId(emp.id)} className="text-red-500 hover:bg-red-50 p-1.5 rounded transition-colors">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))
                 )}
               </tbody>
             </table>
@@ -249,7 +254,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
           <div className="p-4 bg-purple-50 border-b border-purple-100 flex justify-between items-center">
             <p className="text-xs text-purple-800">Gerencie quem tem acesso ao aplicativo (Login) e vincule Supervisores às suas Equipes.</p>
             {!isAddingUser && (
-              <button 
+              <button
                 onClick={() => setIsAddingUser(true)}
                 className="bg-purple-600 text-white px-3 py-1.5 rounded text-sm font-medium flex items-center gap-1 hover:bg-purple-700 transition-colors"
               >
@@ -261,13 +266,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
           {isAddingUser && (
             <div className="p-4 bg-gray-50 border-b border-gray-200">
               <div className="flex justify-between items-center mb-4">
-                  <h4 className="text-sm font-bold text-purple-800 uppercase flex items-center gap-2">
-                    {editingUserId ? <Pencil className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
-                    {editingUserId ? 'Editar Usuário' : 'Novo Usuário'}
-                  </h4>
-                  <button onClick={resetUserForm} className="text-gray-400 hover:text-red-500 transition-colors">
-                    <XCircle className="w-5 h-5" />
-                  </button>
+                <h4 className="text-sm font-bold text-purple-800 uppercase flex items-center gap-2">
+                  {editingUserId ? <Pencil className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                  {editingUserId ? 'Editar Usuário' : 'Novo Usuário'}
+                </h4>
+                <button onClick={resetUserForm} className="text-gray-400 hover:text-red-500 transition-colors">
+                  <XCircle className="w-5 h-5" />
+                </button>
               </div>
               <form onSubmit={handleSaveUser} className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4 items-end bg-white p-4 rounded-lg shadow-sm border border-gray-100">
                 <div>
@@ -275,12 +280,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
                   <input required className="w-full text-sm p-2 rounded border border-gray-300 focus:ring-2 focus:ring-purple-500 outline-none" value={newUserName} onChange={e => setNewUserName(e.target.value)} />
                 </div>
                 <div>
-                  <label className="text-[10px] font-bold text-gray-500 uppercase mb-1 block">Login</label>
+                  <label className="text-[10px] font-bold text-gray-500 uppercase mb-1 block">Login (Email/Matrícula)</label>
                   <input required className="w-full text-sm p-2 rounded border border-gray-300 focus:ring-2 focus:ring-purple-500 outline-none" value={newUserReg} onChange={e => setNewUserReg(e.target.value)} />
                 </div>
                 <div>
                   <label className="text-[10px] font-bold text-gray-500 uppercase mb-1 block">Senha</label>
-                  <input required className="w-full text-sm p-2 rounded border border-gray-300 focus:ring-2 focus:ring-purple-500 outline-none" value={newUserPass} onChange={e => setNewUserPass(e.target.value)} placeholder="••••••••" />
+                  <input required={!editingUserId} className="w-full text-sm p-2 rounded border border-gray-300 focus:ring-2 focus:ring-purple-500 outline-none" value={newUserPass} onChange={e => setNewUserPass(e.target.value)} placeholder={editingUserId ? "Manter atual" : "••••••••"} />
                 </div>
                 <div>
                   <label className="text-[10px] font-bold text-gray-500 uppercase mb-1 block">Nível</label>
@@ -300,9 +305,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
                   </select>
                 </div>
                 <div className="flex gap-2">
-                    <button type="submit" className="flex-1 bg-green-600 text-white p-2 rounded text-sm font-bold hover:bg-green-700 flex justify-center items-center gap-1 shadow-sm transition-all active:scale-95">
-                      <Save className="w-4 h-4" /> {editingUserId ? 'Atualizar' : 'Salvar'}
-                    </button>
+                  <button type="submit" className="flex-1 bg-green-600 text-white p-2 rounded text-sm font-bold hover:bg-green-700 flex justify-center items-center gap-1 shadow-sm transition-all active:scale-95">
+                    <Save className="w-4 h-4" /> {editingUserId ? 'Atualizar' : 'Salvar'}
+                  </button>
                 </div>
               </form>
             </div>
@@ -321,44 +326,43 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {
               </thead>
               <tbody>
                 {users.map(u => (
-                    <tr key={u.id} className="border-b hover:bg-gray-50">
-                        <td className="px-4 py-3 font-medium text-gray-900">{u.name}</td>
-                        <td className="px-4 py-3 font-mono text-xs">{u.registration}</td>
-                        <td className="px-4 py-3">
-                          <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${
-                            u.role === UserRole.CCO ? 'bg-purple-100 text-purple-800' :
-                            u.role === UserRole.SUPERVISOR ? 'bg-blue-100 text-blue-800' :
+                  <tr key={u.id} className="border-b hover:bg-gray-50">
+                    <td className="px-4 py-3 font-medium text-gray-900">{u.name}</td>
+                    <td className="px-4 py-3 font-mono text-xs">{u.registration}</td>
+                    <td className="px-4 py-3">
+                      <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${u.role === UserRole.CCO ? 'bg-purple-100 text-purple-800' :
+                          u.role === UserRole.SUPERVISOR ? 'bg-blue-100 text-blue-800' :
                             'bg-gray-100 text-gray-800'
-                          }`}>
-                            {u.role}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3">
-                            {u.team ? <span className="bg-yellow-100 text-yellow-800 px-2 py-1 rounded text-xs font-bold">{u.team}</span> : '-'}
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                            <div className="flex justify-end gap-2">
-                                <button onClick={() => handleEditUser(u)} className="text-blue-500 hover:bg-blue-50 p-1.5 rounded transition-colors" title="Editar Usuário">
-                                    <Pencil className="w-4 h-4" />
-                                </button>
-                                
-                                {u.registration !== 'admin' && (
-                                  <>
-                                    {deletingUserId === u.id ? (
-                                        <div className="flex gap-2 items-center">
-                                            <button onClick={() => setDeletingUserId(null)} className="text-[10px] text-gray-500 hover:underline">Cancel</button>
-                                            <button onClick={() => handleConfirmDeleteUser(u.id)} className="bg-red-600 text-white px-2 py-1 rounded text-[10px] font-bold hover:bg-red-700">Confirm</button>
-                                        </div>
-                                    ) : (
-                                        <button onClick={() => setDeletingUserId(u.id)} className="text-red-500 hover:bg-red-50 p-1.5 rounded transition-colors" title="Excluir Usuário">
-                                            <Trash2 className="w-4 h-4" />
-                                        </button>
-                                    )}
-                                  </>
-                                )}
-                            </div>
-                        </td>
-                    </tr>
+                        }`}>
+                        {u.role}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      {u.team ? <span className="bg-yellow-100 text-yellow-800 px-2 py-1 rounded text-xs font-bold">{u.team}</span> : '-'}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <div className="flex justify-end gap-2">
+                        <button onClick={() => handleEditUser(u)} className="text-blue-500 hover:bg-blue-50 p-1.5 rounded transition-colors" title="Editar Usuário">
+                          <Pencil className="w-4 h-4" />
+                        </button>
+
+                        {u.registration !== 'admin' && currentUser.id !== u.id && (
+                          <>
+                            {deletingUserId === u.id ? (
+                              <div className="flex gap-2 items-center">
+                                <button onClick={() => setDeletingUserId(null)} className="text-[10px] text-gray-500 hover:underline">Cancel</button>
+                                <button onClick={() => handleConfirmDeleteUser(u.id)} className="bg-red-600 text-white px-2 py-1 rounded text-[10px] font-bold hover:bg-red-700">Confirm</button>
+                              </div>
+                            ) : (
+                              <button onClick={() => setDeletingUserId(u.id)} className="text-red-500 hover:bg-red-50 p-1.5 rounded transition-colors" title="Excluir Usuário">
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
                 ))}
               </tbody>
             </table>
