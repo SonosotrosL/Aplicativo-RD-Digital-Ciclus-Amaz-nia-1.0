@@ -110,12 +110,13 @@ export const RDForm: React.FC<RDFormProps> = ({ currentUser, onSave, onCancel, e
       if (existingData) return;
 
       const allEmployees = await EmployeeService.getEmployees();
-      // If I am a supervisor, I see everyone, or maybe just my team? 
-      // For now, let's keep logic: if supervisorId matches currentUser, it's my team.
-      let myTeam = allEmployees.filter(e => e.supervisorId === currentUser.id);
-      if (myTeam.length === 0) myTeam = allEmployees; // Fallback
 
-      const initialAttendance: AttendanceRecord[] = myTeam.map(e => ({
+      let employeesToShow = allEmployees;
+      if (currentUser.role === UserRole.ENCARREGADO) {
+        employeesToShow = allEmployees.filter(e => e.foremanId === currentUser.id);
+      }
+
+      const initialAttendance = employeesToShow.map(e => ({
         employeeId: e.id,
         name: e.name,
         registration: e.registration,
@@ -336,16 +337,39 @@ export const RDForm: React.FC<RDFormProps> = ({ currentUser, onSave, onCancel, e
     if (location) fetchNearbyStreets(location.lat, location.lng, streetName);
   };
 
-  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>, type: 'initial' | 'progress' | 'final') => {
+  // Image uploading states
+  const [uploadingInitial, setUploadingInitial] = useState(false);
+  const [uploadingProgress, setUploadingProgress] = useState(false);
+  const [uploadingFinal, setUploadingFinal] = useState(false);
+
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>, type: 'initial' | 'progress' | 'final') => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        if (type === 'initial') setPhotoInitial(reader.result as string);
-        else if (type === 'progress') setPhotoProgress(reader.result as string);
-        else if (type === 'final') setPhotoFinal(reader.result as string);
-      };
-      reader.readAsDataURL(file);
+      try {
+        const timestamp = Date.now();
+        // Generate a path: user_id/date/timestamp_type
+        const path = `${currentUser.id}/${getLocalDateString()}/${timestamp}_${type}`;
+
+        let url = '';
+        if (type === 'initial') setUploadingInitial(true);
+        if (type === 'progress') setUploadingProgress(true);
+        if (type === 'final') setUploadingFinal(true);
+
+        const { ImageUploadService } = await import('../services/supabase/ImageUploadService');
+        url = await ImageUploadService.uploadPhoto(file, path);
+
+        if (type === 'initial') setPhotoInitial(url);
+        else if (type === 'progress') setPhotoProgress(url);
+        else if (type === 'final') setPhotoFinal(url);
+
+      } catch (error) {
+        console.error("Upload error", error);
+        alert("Erro ao enviar foto. Tente novamente.");
+      } finally {
+        if (type === 'initial') setUploadingInitial(false);
+        if (type === 'progress') setUploadingProgress(false);
+        if (type === 'final') setUploadingFinal(false);
+      }
     }
   };
 
@@ -421,8 +445,15 @@ export const RDForm: React.FC<RDFormProps> = ({ currentUser, onSave, onCancel, e
       observations,
       createdAt: existingData?.createdAt || Date.now()
     };
-    await onSave(rdToSave);
-    setIsSaving(false);
+    try {
+      await onSave(rdToSave);
+      // Success handled by parent (view switch), but we reset here just in case
+      setIsSaving(false);
+    } catch (error: any) {
+      console.error("Erro no formulário:", error);
+      alert("Erro ao enviar RD: " + (error.message || "Erro desconhecido"));
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -677,10 +708,13 @@ export const RDForm: React.FC<RDFormProps> = ({ currentUser, onSave, onCancel, e
           <h3 className="text-sm font-bold text-gray-400 uppercase mb-4 flex items-center gap-2"><ImageIcon className="w-4 h-4" /> 6. Comprovação por Fotos</h3>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {/* Foto Inicial */}
-            <div onClick={() => initialInputRef.current?.click()} className={`border-2 border-dashed rounded-lg p-4 flex flex-col items-center justify-center cursor-pointer transition-colors ${photoInitial ? 'border-ciclus-500 bg-ciclus-50' : 'border-gray-300 hover:bg-gray-50'}`}>
+            {/* Foto Inicial */}
+            <div onClick={() => !uploadingInitial && initialInputRef.current?.click()} className={`border-2 border-dashed rounded-lg p-4 flex flex-col items-center justify-center cursor-pointer transition-colors ${photoInitial ? 'border-ciclus-500 bg-ciclus-50' : 'border-gray-300 hover:bg-gray-50'}`}>
               <input ref={initialInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={e => handlePhotoUpload(e, 'initial')} />
               <p className="text-[10px] font-bold text-gray-400 uppercase mb-2">1. Foto Inicial</p>
-              {photoInitial ? (
+              {uploadingInitial ? (
+                <Loader2 className="w-8 h-8 text-ciclus-600 animate-spin" />
+              ) : photoInitial ? (
                 <div className="relative w-full">
                   <img src={photoInitial} alt="Inicial" className="w-full h-32 object-cover rounded shadow-sm" />
                 </div>
@@ -690,10 +724,12 @@ export const RDForm: React.FC<RDFormProps> = ({ currentUser, onSave, onCancel, e
             </div>
 
             {/* Foto Progresso */}
-            <div onClick={() => progressInputRef.current?.click()} className={`border-2 border-dashed rounded-lg p-4 flex flex-col items-center justify-center cursor-pointer transition-colors ${photoProgress ? 'border-ciclus-500 bg-ciclus-50' : 'border-gray-300 hover:bg-gray-50'}`}>
+            <div onClick={() => !uploadingProgress && progressInputRef.current?.click()} className={`border-2 border-dashed rounded-lg p-4 flex flex-col items-center justify-center cursor-pointer transition-colors ${photoProgress ? 'border-ciclus-500 bg-ciclus-50' : 'border-gray-300 hover:bg-gray-50'}`}>
               <input ref={progressInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={e => handlePhotoUpload(e, 'progress')} />
               <p className="text-[10px] font-bold text-gray-400 uppercase mb-2">2. Foto Progresso</p>
-              {photoProgress ? (
+              {uploadingProgress ? (
+                <Loader2 className="w-8 h-8 text-ciclus-600 animate-spin" />
+              ) : photoProgress ? (
                 <div className="relative w-full">
                   <img src={photoProgress} alt="Progresso" className="w-full h-32 object-cover rounded shadow-sm" />
                 </div>
@@ -703,10 +739,12 @@ export const RDForm: React.FC<RDFormProps> = ({ currentUser, onSave, onCancel, e
             </div>
 
             {/* Foto Final */}
-            <div onClick={() => finalInputRef.current?.click()} className={`border-2 border-dashed rounded-lg p-4 flex flex-col items-center justify-center cursor-pointer transition-colors ${photoFinal ? 'border-ciclus-500 bg-ciclus-50' : 'border-gray-300 hover:bg-gray-50'}`}>
+            <div onClick={() => !uploadingFinal && finalInputRef.current?.click()} className={`border-2 border-dashed rounded-lg p-4 flex flex-col items-center justify-center cursor-pointer transition-colors ${photoFinal ? 'border-ciclus-500 bg-ciclus-50' : 'border-gray-300 hover:bg-gray-50'}`}>
               <input ref={finalInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={e => handlePhotoUpload(e, 'final')} />
               <p className="text-[10px] font-bold text-gray-400 uppercase mb-2">3. Foto Final</p>
-              {photoFinal ? (
+              {uploadingFinal ? (
+                <Loader2 className="w-8 h-8 text-ciclus-600 animate-spin" />
+              ) : photoFinal ? (
                 <div className="relative w-full">
                   <img src={photoFinal} alt="Final" className="w-full h-32 object-cover rounded shadow-sm" />
                 </div>

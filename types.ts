@@ -98,6 +98,8 @@ export interface Employee {
   registration: string;
   role: string;
   supervisorId?: string;
+  foremanId?: string; // New field
+  team?: string;
 }
 
 export interface AttendanceRecord {

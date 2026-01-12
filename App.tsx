@@ -8,7 +8,8 @@ import { Login } from './components/Login';
 import { SincronizadorDeDados } from './services/supabase/SincronizadorDeDados';
 import { useAuth } from './context/AuthContext';
 import { LogOut, Plus, Database, LayoutDashboard, BarChart3, Loader2, Wifi, WifiOff } from 'lucide-react';
-import ConectorSupabase from './services/supabase/ConectorSupabase';
+import { supabase } from './lib/supabaseClient';
+
 
 const App: React.FC = () => {
   const { user: currentUser, signOut, loading: authLoading } = useAuth();
@@ -24,8 +25,9 @@ const App: React.FC = () => {
 
       // Check connection periodically
       const interval = setInterval(async () => {
-        const connected = await ConectorSupabase.checkConnection();
-        setIsConnected(connected);
+        // Quick check
+        const { error } = await supabase.from('rd_registros').select('count', { count: 'exact', head: true });
+        setIsConnected(!error);
       }, 30000);
 
       // Subscribe to Realtime changes
@@ -37,6 +39,7 @@ const App: React.FC = () => {
         clearInterval(interval);
         subscription?.unsubscribe();
       };
+
     }
   }, [currentUser]);
 
@@ -53,13 +56,19 @@ const App: React.FC = () => {
   };
 
   const handleSaveRD = async (data: RDData) => {
-    setLoading(true);
-    await SincronizadorDeDados.syncToSupabase(data);
-    // Refresh is handled by subscription or manual refresh
-    await refreshRDs();
-    setEditingRD(undefined);
-    setView('dashboard');
-    setLoading(false);
+    try {
+      setLoading(true);
+      await SincronizadorDeDados.syncToSupabase(data);
+      // Refresh is handled by subscription or manual refresh
+      await refreshRDs();
+      setEditingRD(undefined);
+      setView('dashboard');
+    } catch (error) {
+      console.error("Erro ao salvar RD no App:", error);
+      throw error; // Re-throw to let RDForm know it failed
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleUpdateStatus = async (id: string, status: RDStatus, note?: string) => {

@@ -1,11 +1,11 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import ConectorSupabase from '../services/supabase/ConectorSupabase';
+import { supabase } from '../lib/supabaseClient';
 import { User, UserRole } from '../types';
 
 interface AuthContextType {
     user: User | null;
     loading: boolean;
-    signIn: (registration: string, password: string) => Promise<{ error?: string }>;
+    signIn: (email: string, password: string) => Promise<{ error?: string }>;
     signOut: () => Promise<void>;
 }
 
@@ -20,7 +20,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         checkSession();
 
         // Listen for auth changes
-        const { data: { subscription } } = ConectorSupabase.client!.auth.onAuthStateChange((_event, session) => {
+        const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
             if (session?.user) {
                 fetchProfile(session.user.id);
             } else {
@@ -34,101 +34,70 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const checkSession = async () => {
         try {
-            const { data: { session } } = await ConectorSupabase.client!.auth.getSession();
+            const { data: { session } } = await supabase.auth.getSession();
             if (session?.user) {
                 await fetchProfile(session.user.id);
             } else {
                 setLoading(false);
             }
-        } catch (error) {
-            console.error('Session check failed', error);
+        } catch (e) {
             setLoading(false);
         }
     };
 
     const fetchProfile = async (userId: string) => {
         try {
-            const { data, error } = await ConectorSupabase.client!
+            const { data, error } = await supabase
                 .from('profiles')
                 .select('*')
                 .eq('id', userId)
                 .single();
 
-            if (error) {
-                // If profile not found, create one
-                if (error.code === 'PGRST116') {
-                    console.log('Perfil não encontrado, criando um novo...');
-                    const { data: userData } = await ConectorSupabase.client!.auth.getUser();
-                    const email = userData.user?.email || '';
-                    const defaultName = email.split('@')[0];
-
-                    const newProfile = {
-                        id: userId,
-                        name: defaultName,
-                        registration: email.split('@')[0], // Use email prefix as registration
-                        role: UserRole.ENCARREGADO, // Default role
-                        team: 'S10' // Default team
-                    };
-
-                    const { error: insertError } = await ConectorSupabase.client!
-                        .from('profiles')
-                        .insert(newProfile);
-
-                    if (!insertError) {
-                        setUser({
-                            id: newProfile.id,
-                            name: newProfile.name,
-                            registration: newProfile.registration,
-                            role: newProfile.role,
-                            team: newProfile.team
-                        });
-                        return;
-                    }
-                    console.error('Erro ao criar perfil fallback:', insertError);
-                }
-                throw error;
-            }
-
             if (data) {
-                setUser({
-                    id: data.id,
-                    name: data.name,
-                    registration: data.registration,
-                    role: data.role as UserRole,
-                    team: data.team
-                });
+                setUser(data as User);
+            } else {
+                // Fallback or create profile if needed
+                const { data: { user: authUser } } = await supabase.auth.getUser();
+                if (authUser) {
+                    const newUser: User = {
+                        id: authUser.id,
+                        name: authUser.user_metadata.name || 'Usuário',
+                        role: authUser.user_metadata.role || UserRole.ENCARREGADO,
+                        registration: '',
+                        team: ''
+                    };
+                    setUser(newUser);
+                }
             }
-        } catch (error) {
-            console.error('Error fetching profile:', error);
-            // Even on error, stop loading so user isn't stuck
-            // setUser(null); // Keep user null so they stay on login screen or show error
+        } catch (e) {
+            console.error("Error fetching profile", e);
         } finally {
             setLoading(false);
         }
     };
 
-    const signIn = async (email: string, password: string) => {
-        // Note: User input is 'registration', but Supabase expects email.
-        // We assume the user enters an email derived from registration or just an email.
-        // To keep it simple for this migration: we'll assume the input is email for now, 
-        // or we append a fake domain like registration@ciclus.com if it's just a number.
+    const signIn = async (email: string, pass: string) => {
+        try {
+            let emailToUse = email;
+            if (!email.includes('@')) {
+                emailToUse = `${email}@ciclus.com`;
+            }
 
-        let emailToUse = email;
-        if (!email.includes('@')) {
-            emailToUse = `${email}@ciclus.com`;
+            // Try sign in with email/password
+            const { error } = await supabase.auth.signInWithPassword({
+                email: emailToUse,
+                password: pass,
+            });
+
+            if (error) return { error: error.message };
+            return {};
+        } catch (e: any) {
+            return { error: e.message };
         }
-
-        const { error } = await ConectorSupabase.client!.auth.signInWithPassword({
-            email: emailToUse,
-            password
-        });
-
-        if (error) return { error: error.message };
-        return {};
     };
 
     const signOut = async () => {
-        await ConectorSupabase.client!.auth.signOut();
+        await supabase.auth.signOut();
         setUser(null);
     };
 

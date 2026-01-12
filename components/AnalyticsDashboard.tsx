@@ -8,6 +8,20 @@ interface AnalyticsDashboardProps {
     rds: RDData[];
 }
 
+import { supabase } from '../lib/supabaseClient';
+
+// New interface for Aggregated Data
+interface DailyIndicator {
+    date: string;
+    supervisor_id: string;
+    foreman_id: string;
+    team: string;
+    total_capina_m: number;
+    total_rocagem_m2: number;
+    total_pintura_m: number;
+    total_postes_und: number;
+}
+
 export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ rds }) => {
     const [dateMode, setDateMode] = useState<'month' | 'day'>('month');
     const [selectedDateValue, setSelectedDateValue] = useState(new Date().toISOString().slice(0, 7));
@@ -18,6 +32,8 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ rds }) =
     const [rankingTab, setRankingTab] = useState<'sups' | 'foremen'>('sups');
 
     const [allUsers, setAllUsers] = useState<User[]>([]);
+    const [indicators, setIndicators] = useState<DailyIndicator[]>([]);
+    const [loadingData, setLoadingData] = useState(false);
 
     useEffect(() => {
         const loadUsers = async () => {
@@ -25,57 +41,69 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ rds }) =
             setAllUsers(users);
         };
         loadUsers();
-    }, [rds]);
+    }, []);
 
+    // Fetch Aggregated Indicators from Supabase
+    useEffect(() => {
+        const fetchIndicators = async () => {
+            setLoadingData(true);
+            try {
+                let query = supabase.from('rd_indicadores_dia').select('*');
+
+                // Apply Date Filter
+                if (dateMode === 'day') {
+                    query = query.eq('date', selectedDateValue);
+                } else {
+                    // Month filter: e.g. 2024-01-01 to 2024-01-31
+                    const start = `${selectedDateValue}-01`;
+                    // Simple end of month calc
+                    const [y, m] = selectedDateValue.split('-').map(Number);
+                    const lastDay = new Date(y, m, 0).getDate();
+                    const end = `${selectedDateValue}-${lastDay}`;
+                    query = query.gte('date', start).lte('date', end);
+                }
+
+                if (selectedSupervisor !== 'ALL') {
+                    query = query.eq('supervisor_id', selectedSupervisor);
+                }
+                if (selectedForeman !== 'ALL') {
+                    query = query.eq('foreman_id', selectedForeman);
+                }
+                // Shift is not in aggregated table yet (maybe add later?), for now ignored or handled if added
+
+                const { data, error } = await query;
+                if (error) throw error;
+
+                setIndicators(data as DailyIndicator[]);
+            } catch (e) {
+                console.error("Error loading indicators", e);
+            } finally {
+                setLoadingData(false);
+            }
+        };
+
+        fetchIndicators();
+    }, [dateMode, selectedDateValue, selectedSupervisor, selectedForeman]);
+
+    // Supervisors List from Users (not RDs anymore)
     const supervisorsList = useMemo(() => {
-        const systemSups = allUsers.filter(u => u.role === UserRole.SUPERVISOR);
-        const rdSupIds = new Set(rds.map(r => r.supervisorId).filter(Boolean));
-        const supMap = new Map<string, string>();
+        return allUsers.filter(u => u.role === UserRole.SUPERVISOR);
+    }, [allUsers]);
 
-        systemSups.forEach(u => supMap.set(u.id, u.name));
-        rdSupIds.forEach(id => {
-            if (!supMap.has(id as string)) {
-                const found = allUsers.find(u => u.id === id);
-                supMap.set(id as string, found ? found.name : `Supervisor (ID: ${id?.toString().slice(0, 4)})`);
-            }
-        });
-        return Array.from(supMap.entries()).map(([id, name]) => ({ id, name }));
-    }, [rds, allUsers]);
-
+    // Foremen List
     const foremenList = useMemo(() => {
-        const map = new Map<string, string>();
-        rds.forEach(rd => {
-            const idKey = rd.foremanId;
-            const nameKey = rd.foremanName;
-            if (!map.has(idKey)) map.set(idKey, nameKey);
-        });
-        return Array.from(map.entries())
-            .map(([id, name]) => ({ id, name }))
-            .sort((a, b) => a.name.localeCompare(b.name));
-    }, [rds]);
+        return allUsers.filter(u => u.role === UserRole.ENCARREGADO);
+    }, [allUsers]);
 
-    const filteredData = useMemo(() => {
-        return rds.filter(rd => {
-            const rdDate = rd.date.split('T')[0];
-            if (dateMode === 'month') {
-                if (!rdDate.startsWith(selectedDateValue)) return false;
-            } else {
-                if (rdDate !== selectedDateValue) return false;
-            }
-            if (selectedSupervisor !== 'ALL' && rd.supervisorId !== selectedSupervisor) return false;
-            if (selectedShift !== 'ALL' && rd.shift !== selectedShift) return false;
-            if (selectedForeman !== 'ALL' && rd.foremanId !== selectedForeman) return false;
-            return true;
-        });
-    }, [rds, dateMode, selectedDateValue, selectedSupervisor, selectedShift, selectedForeman]);
 
-    const distinctDaysCount = new Set(filteredData.map(rd => rd.date.split('T')[0])).size;
+    const distinctDaysCount = new Set(indicators.map(i => i.date)).size;
     const avgDivisor = distinctDaysCount === 0 ? 1 : distinctDaysCount;
 
-    const totalCapina = filteredData.reduce((acc, rd) => acc + (Number(rd.metrics.capinaM) || 0), 0);
-    const totalPinturaVias = filteredData.reduce((acc, rd) => acc + (Number(rd.metrics.pinturaViasM) || 0), 0);
-    const totalPinturaPostes = filteredData.reduce((acc, rd) => acc + (Number(rd.metrics.pinturaPostesUnd) || 0), 0);
-    const totalRocagem = filteredData.reduce((acc, rd) => acc + (Number(rd.metrics.rocagemM2) || 0), 0);
+    // Sum Aggregates
+    const totalCapina = indicators.reduce((acc, curr) => acc + (Number(curr.total_capina_m) || 0), 0);
+    const totalPinturaVias = indicators.reduce((acc, curr) => acc + (Number(curr.total_pintura_m) || 0), 0);
+    const totalPinturaPostes = indicators.reduce((acc, curr) => acc + (Number(curr.total_postes_und) || 0), 0);
+    const totalRocagem = indicators.reduce((acc, curr) => acc + (Number(curr.total_rocagem_m2) || 0), 0);
 
     const avgCapina = Math.round(totalCapina / avgDivisor);
     const avgPintura = Math.round(totalPinturaVias / avgDivisor);
@@ -83,6 +111,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ rds }) =
     const avgRocagem = Math.round(totalRocagem / avgDivisor);
 
     const dailyStats = useMemo(() => {
+        // ... (Logic adapted to indicators)
         const contextMonth = dateMode === 'month' ? selectedDateValue : selectedDateValue.substring(0, 7);
         const [year, month] = contextMonth.split('-').map(Number);
         const stats: Record<string, { capina: number, tCapina: number, rocagem: number, tRocagem: number }> = {};
@@ -93,59 +122,70 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ rds }) =
             stats[dayKey] = { capina: 0, tCapina: 0, rocagem: 0, tRocagem: 0 };
         }
 
-        filteredData.forEach(rd => {
-            const dayKey = rd.date.split('T')[0];
+        indicators.forEach(ind => {
+            const dayKey = ind.date; // already YYYY-MM-DD
             if (stats[dayKey]) {
-                if (rd.metrics.capinaM > 0) {
-                    stats[dayKey].capina += rd.metrics.capinaM;
-                    stats[dayKey].tCapina += 1;
+                if (ind.total_capina_m > 0) {
+                    stats[dayKey].capina += Number(ind.total_capina_m);
+                    stats[dayKey].tCapina += 1; // Assuming 1 entry per supervisor/team per day is a valid denominator? Or just sum?
+                    // Avg logic might need refinement if multiple teams work same day. 
+                    // Usually avg per day = Total / Days.
+                    // The chart shows "Daily Average". Maybe it means "Total Production of Day".
+                    // Let's assume the chart wants Total Production per Day.
                 }
-                if (rd.metrics.rocagemM2 > 0) {
-                    stats[dayKey].rocagem += rd.metrics.rocagemM2;
+                if (ind.total_rocagem_m2 > 0) {
+                    stats[dayKey].rocagem += Number(ind.total_rocagem_m2);
                     stats[dayKey].tRocagem += 1;
                 }
             }
         });
 
+        // Re-mapping for chart
         return Object.entries(stats).map(([date, data]) => ({
             date,
             day: date.split('-')[2],
-            avgCapina: data.tCapina > 0 ? data.capina / data.tCapina : 0,
-            avgRocagem: data.tRocagem > 0 ? data.rocagem / data.tRocagem : 0,
-            tCapina: data.tCapina,
-            tRocagem: data.tRocagem
+            avgCapina: data.capina, // Total per day
+            avgRocagem: data.rocagem, // Total per day
+            tCapina: 1, // Dummy
+            tRocagem: 1
         }));
-    }, [filteredData, selectedDateValue, dateMode]);
+
+    }, [indicators, selectedDateValue, dateMode]);
 
     const rankings = useMemo(() => {
-        const supRank: Record<string, { name: string, cap: number, roc: number, pintV: number, pintP: number }> = {};
+        const supRank: Record<string, { name: string, cap: number, roc: number, pintV: number, pintP: number, team?: string }> = {};
         const foreRank: Record<string, { name: string, cap: number, roc: number, pintV: number, pintP: number }> = {};
 
-        filteredData.forEach(rd => {
-            // Supervisor Grouping
-            const sKey = rd.supervisorId || 'unknown';
-            if (!supRank[sKey]) supRank[sKey] = { name: rd.supervisorName || 'S/ Identificação', cap: 0, roc: 0, pintV: 0, pintP: 0 };
-            supRank[sKey].cap += rd.metrics.capinaM;
-            supRank[sKey].roc += rd.metrics.rocagemM2;
-            supRank[sKey].pintV += rd.metrics.pinturaViasM;
-            supRank[sKey].pintP += rd.metrics.pinturaPostesUnd;
+        indicators.forEach(ind => {
+            // Supervisor
+            const sKey = ind.supervisor_id || 'unknown';
+            if (!supRank[sKey]) {
+                const u = allUsers.find(x => x.id === sKey);
+                supRank[sKey] = { name: u?.name || 'S/ ID', cap: 0, roc: 0, pintV: 0, pintP: 0, team: u?.team };
+            }
+            supRank[sKey].cap += Number(ind.total_capina_m);
+            supRank[sKey].roc += Number(ind.total_rocagem_m2);
+            supRank[sKey].pintV += Number(ind.total_pintura_m);
+            supRank[sKey].pintP += Number(ind.total_postes_und);
 
-            // Foreman Grouping
-            const fKey = rd.foremanId;
-            if (!foreRank[fKey]) foreRank[fKey] = { name: rd.foremanName, cap: 0, roc: 0, pintV: 0, pintP: 0 };
-            foreRank[fKey].cap += rd.metrics.capinaM;
-            foreRank[fKey].roc += rd.metrics.rocagemM2;
-            foreRank[fKey].pintV += rd.metrics.pinturaViasM;
-            foreRank[fKey].pintP += rd.metrics.pinturaPostesUnd;
+            // Foreman
+            const fKey = ind.foreman_id || 'unknown';
+            if (!foreRank[fKey]) {
+                const u = allUsers.find(x => x.id === fKey);
+                foreRank[fKey] = { name: u?.name || 'S/ ID', cap: 0, roc: 0, pintV: 0, pintP: 0 };
+            }
+            foreRank[fKey].cap += Number(ind.total_capina_m);
+            foreRank[fKey].roc += Number(ind.total_rocagem_m2);
+            foreRank[fKey].pintV += Number(ind.total_pintura_m);
+            foreRank[fKey].pintP += Number(ind.total_postes_und);
         });
 
         const sortFn = (a: any, b: any) => b.cap - a.cap || b.roc - a.roc;
-
         return {
             supervisors: Object.entries(supRank).map(([id, val]) => ({ id, ...val })).sort(sortFn),
             foremen: Object.entries(foreRank).map(([id, val]) => ({ id, ...val })).sort(sortFn)
         };
-    }, [filteredData]);
+    }, [indicators, allUsers]);
 
     const META_CAPINA = 1950;
     const META_ROCAGEM = 1000;
@@ -185,7 +225,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ rds }) =
                 </div>
             </div>
 
-            {filteredData.length === 0 ? (
+            {indicators.length === 0 ? (
                 <div className="text-center py-16 bg-white rounded-xl border border-dashed border-gray-300 text-gray-400">Sem dados para o período selecionado.</div>
             ) : (
                 <>

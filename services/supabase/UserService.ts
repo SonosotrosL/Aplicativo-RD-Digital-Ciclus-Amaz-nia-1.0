@@ -1,12 +1,12 @@
-import ConectorSupabase from './ConectorSupabase';
+
+import { supabase } from '../../lib/supabaseClient';
 import { User, UserRole } from '../../types';
+
+
 
 export class UserService {
     static async getUsers(): Promise<User[]> {
-        const client = ConectorSupabase.client;
-        if (!client) return [];
-
-        const { data, error } = await client
+        const { data, error } = await supabase
             .from('profiles')
             .select('*')
             .order('name');
@@ -16,7 +16,7 @@ export class UserService {
             return [];
         }
 
-        return data.map(p => ({
+        return data.map((p: any) => ({
             id: p.id,
             name: p.name,
             registration: p.registration,
@@ -26,59 +26,75 @@ export class UserService {
     }
 
     static async saveUser(user: User): Promise<boolean> {
-        const client = ConectorSupabase.client;
-        if (!client) return false;
-
-        // New User -> Call Edge Function to create in Auth + Profiles
-        if (!user.id || user.id.length < 5) { // Check if valid ID or temp/empty
+        // New User -> Use signUp (correct hashing) + RPC (confirm/profile)
+        if (!user.id || user.id.length < 5) {
             try {
-                const { data, error } = await client.functions.invoke('create-user', {
+                const email = user.registration.includes('@') ? user.registration : `${user.registration}@ciclus.com`;
+
+                // 1. Create User via Edge Function (Bypasses Rate Limits & Auto-confirms)
+                const { data: efData, error: efError } = await supabase.functions.invoke('create-user', {
                     body: {
-                        email: user.registration.includes('@') ? user.registration : `${user.registration}@ciclus.com`,
-                        password: user.password,
-                        name: user.name,
-                        registration: user.registration,
-                        role: user.role,
-                        team: user.team
+                        email: email,
+                        password: user.password!,
+                        userData: {
+                            name: user.name,
+                            role: user.role,
+                            registration: user.registration,
+                            team: user.team
+                        }
                     }
                 });
 
-                if (error) throw error;
+                if (efError) throw efError;
+                if (efData?.error) {
+                    if (efData.error.includes('already registered')) {
+                        // If already registered, we proceed to 'fix' (update) via RPC below
+                        console.warn('Usuário já existe, atualizando dados...');
+                    } else {
+                        throw new Error(efData.error);
+                    }
+                }
+
+                // 2. Fix/Confirm User via RPC (Ensures consistency)
+                const { error: rpcError } = await supabase.rpc('admin_fix_user', {
+                    p_email: email,
+                    p_name: user.name,
+                    p_registration: user.registration,
+                    p_role: user.role,
+                    p_team: user.team || null
+                });
+
+                if (rpcError) throw rpcError;
                 return true;
+
             } catch (e) {
                 console.error('Erro ao criar usuário:', e);
-                throw e;
+                throw e; // Propagate error to UI
             }
         } else {
             // Update existing user (Only profile fields)
-            // Updating password via client is strictly limited to the user themselves usually.
-            // Admins updating other's passwords requires Edge Function 'update-user' (not implemented yet), 
-            // or we just update the metadata in profiles.
-
-            const { error } = await client
+            const { error } = await supabase
                 .from('profiles')
                 .update({
                     name: user.name,
                     role: user.role,
-                    team: user.team,
-                    // registration: user.registration // Usually immutable or linked to email
+                    team: user.team || null, // Ensure NULL is sent to clear the field
                 })
                 .eq('id', user.id);
 
-            return !error;
+            if (error) throw error;
+            return true;
         }
     }
 
     static async deleteUser(id: string): Promise<boolean> {
-        // Note: Deleting from 'profiles' might fail if linked to auth.
-        // Usually need an edge function to delete from auth.users which cascades to profiles.
-        // For now, we'll try direct delete (will fail if RLS/Foreign Key issues) or implement 'delete-user' function.
-
-        // Let's assume we need an Edge Function for full deletion, but we can try soft delete or direct delete if configured.
-        // Since I didn't create 'delete-user' function yet, I will alert the user if they try this specific action
-        // or we can implement it now.
-
-        console.warn("Delete user requires admin privileges on Auth.");
-        return false; // Placeholder until implemented
+        try {
+            const { error } = await supabase.rpc('admin_delete_user', { user_id: id });
+            if (error) throw error;
+            return true;
+        } catch (e) {
+            console.error("Erro ao excluir usuário:", e);
+            return false;
+        }
     }
 }

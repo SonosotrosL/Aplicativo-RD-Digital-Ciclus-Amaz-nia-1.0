@@ -1,0 +1,173 @@
+[1mdiff --git a/App.tsx b/App.tsx[m
+[1mindex b4f0a12..a0558f5 100644[m
+[1m--- a/App.tsx[m
+[1m+++ b/App.tsx[m
+[36m@@ -8,7 +8,8 @@[m [mimport { Login } from './components/Login';[m
+ import { SincronizadorDeDados } from './services/supabase/SincronizadorDeDados';[m
+ import { useAuth } from './context/AuthContext';[m
+ import { LogOut, Plus, Database, LayoutDashboard, BarChart3, Loader2, Wifi, WifiOff } from 'lucide-react';[m
+[31m-import ConectorSupabase from './services/supabase/ConectorSupabase';[m
+[32m+[m[32mimport { supabase } from './lib/supabaseClient';[m
+[32m+[m
+ [m
+ const App: React.FC = () => {[m
+   const { user: currentUser, signOut, loading: authLoading } = useAuth();[m
+[36m@@ -24,8 +25,9 @@[m [mconst App: React.FC = () => {[m
+ [m
+       // Check connection periodically[m
+       const interval = setInterval(async () => {[m
+[31m-        const connected = await ConectorSupabase.checkConnection();[m
+[31m-        setIsConnected(connected);[m
+[32m+[m[32m        // Quick check[m
+[32m+[m[32m        const { error } = await supabase.from('rd_registros').select('count', { count: 'exact', head: true });[m
+[32m+[m[32m        setIsConnected(!error);[m
+       }, 30000);[m
+ [m
+       // Subscribe to Realtime changes[m
+[36m@@ -37,6 +39,7 @@[m [mconst App: React.FC = () => {[m
+         clearInterval(interval);[m
+         subscription?.unsubscribe();[m
+       };[m
+[32m+[m
+     }[m
+   }, [currentUser]);[m
+ [m
+[36m@@ -53,13 +56,19 @@[m [mconst App: React.FC = () => {[m
+   };[m
+ [m
+   const handleSaveRD = async (data: RDData) => {[m
+[31m-    setLoading(true);[m
+[31m-    await SincronizadorDeDados.syncToSupabase(data);[m
+[31m-    // Refresh is handled by subscription or manual refresh[m
+[31m-    await refreshRDs();[m
+[31m-    setEditingRD(undefined);[m
+[31m-    setView('dashboard');[m
+[31m-    setLoading(false);[m
+[32m+[m[32m    try {[m
+[32m+[m[32m      setLoading(true);[m
+[32m+[m[32m      await SincronizadorDeDados.syncToSupabase(data);[m
+[32m+[m[32m      // Refresh is handled by subscription or manual refresh[m
+[32m+[m[32m      await refreshRDs();[m
+[32m+[m[32m      setEditingRD(undefined);[m
+[32m+[m[32m      setView('dashboard');[m
+[32m+[m[32m    } catch (error) {[m
+[32m+[m[32m      console.error("Erro ao salvar RD no App:", error);[m
+[32m+[m[32m      throw error; // Re-throw to let RDForm know it failed[m
+[32m+[m[32m    } finally {[m
+[32m+[m[32m      setLoading(false);[m
+[32m+[m[32m    }[m
+   };[m
+ [m
+   const handleUpdateStatus = async (id: string, status: RDStatus, note?: string) => {[m
+[1mdiff --git a/components/AdminPanel.tsx b/components/AdminPanel.tsx[m
+[1mindex 430a1ad..b23cfc8 100644[m
+[1m--- a/components/AdminPanel.tsx[m
+[1m+++ b/components/AdminPanel.tsx[m
+[36m@@ -19,8 +19,10 @@[m [mexport const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {[m
+   const [newEmpName, setNewEmpName] = useState('');[m
+   const [newEmpReg, setNewEmpReg] = useState('');[m
+   const [newEmpRole, setNewEmpRole] = useState('');[m
+[32m+[m[32m  const [newEmployeeForemanId, setNewEmployeeForemanId] = useState(''); // New State[m
+   const [availableRoles, setAvailableRoles] = useState<string[]>([]);[m
+   const [deletingEmpId, setDeletingEmpId] = useState<string | null>(null);[m
+[32m+[m[32m  const [editingEmployeeId, setEditingEmployeeId] = useState<string | null>(null);[m
+ [m
+   // Users State (CCO Only)[m
+   const [users, setUsers] = useState<User[]>([]);[m
+[36m@@ -32,8 +34,11 @@[m [mexport const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {[m
+   const [newUserPass, setNewUserPass] = useState('');[m
+   const [newUserRole, setNewUserRole] = useState<UserRole>(UserRole.ENCARREGADO);[m
+   const [newUserTeam, setNewUserTeam] = useState<string>('');[m
+[32m+[m[32m  const [isCustomTeam, setIsCustomTeam] = useState(false); // New State[m
+   const [deletingUserId, setDeletingUserId] = useState<string | null>(null);[m
+ [m
+[32m+[m
+[32m+[m
+   useEffect(() => {[m
+     refreshData();[m
+   }, []);[m
+[36m@@ -54,20 +59,46 @@[m [mexport const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {[m
+   const handleSaveEmployee = async (e: React.FormEvent) => {[m
+     e.preventDefault();[m
+     setLoading(true);[m
+[31m-    const newEmp: Employee = {[m
+[31m-      id: ``, // Service handles ID[m
+[32m+[m[32m    const employeeToSave: Employee = {[m
+[32m+[m[32m      id: editingEmployeeId || ``, // Service handles ID for new, uses existing for edit[m
+       name: newEmpName,[m
+       registration: newEmpReg,[m
+       role: newEmpRole,[m
+[31m-      supervisorId: currentUser.id[m
+[32m+[m[32m      supervisorId: currentUser.id, // Assuming current user is the supervisor[m
+[32m+[m[32m      foremanId: newEmployeeForemanId || undefined[m
+     };[m
+[31m-    await EmployeeService.saveEmployee(newEmp);[m
+[31m-    await refreshData();[m
+[31m-    setIsAddingEmp(false);[m
+[32m+[m[32m    const success = await EmployeeService.saveEmployee(employeeToSave);[m
+[32m+[m[32m    if (success) {[m
+[32m+[m[32m      await refreshData();[m
+[32m+[m[32m      setNewEmpName('');[m
+[32m+[m[32m      setNewEmpReg('');[m
+[32m+[m[32m      setNewEmpRole('');[m
+[32m+[m[32m      setNewEmployeeForemanId('');[m
+[32m+[m[32m      setEditingEmployeeId(null);[m
+[32m+[m[32m      setIsAddingEmp(false); // Close form after saving[m
+[32m+[m[32m    } else {[m
+[32m+[m[32m      alert("Erro ao salvar colaborador.");[m
+[32m+[m[32m    }[m
+[32m+[m[32m    setLoading(false);[m
+[32m+[m[32m  };[m
+[32m+[m
+[32m+[m[32m  const handleEditEmployee = (emp: Employee) => {[m
+[32m+[m[32m    setEditingEmployeeId(emp.id);[m
+[32m+[m[32m    setNewEmpName(emp.name);[m
+[32m+[m[32m    setNewEmpReg(emp.registration);[m
+[32m+[m[32m    setNewEmpRole(emp.role);[m
+[32m+[m[32m    setNewEmployeeForemanId(emp.foremanId || '');[m
+[32m+[m[32m    setIsAddingEmp(true); // Open form for editing[m
+[32m+[m[32m    window.scrollTo({ top: 0, behavior: 'smooth' });[m
+[32m+[m[32m  };[m
+[32m+[m
+[32m+[m[32m  const handleCancelEditEmployee = () => {[m
+[32m+[m[32m    setEditingEmployeeId(null);[m
+     setNewEmpName('');[m
+     setNewEmpReg('');[m
+     setNewEmpRole('');[m
+[31m-    setLoading(false);[m
+[32m+[m[32m    setNewEmployeeForemanId('');[m
+[32m+[m[32m    setIsAddingEmp(false);[m
+   };[m
+ [m
+   const handleConfirmDeleteEmployee = async (id: string) => {[m
+[36m@@ -87,6 +118,14 @@[m [mexport const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {[m
+     setNewUserPass(''); // Don't show password[m
+     setNewUserRole(user.role);[m
+     setNewUserTeam(user.team || '');[m
+[32m+[m
+[32m+[m[32m    // Check if team is custom[m
+[32m+[m[32m    if (user.team && !TEAMS.some(t => t.name === user.team)) {[m
+[32m+[m[32m      setIsCustomTeam(true);[m
+[32m+[m[32m    } else {[m
+[32m+[m[32m      setIsCustomTeam(false);[m
+[32m+[m[32m    }[m
+[32m+[m
+     setIsAddingUser(true);[m
+ [m
+     // Scroll to form[m
+[36m@@ -119,7 +158,7 @@[m [mexport const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {[m
+       await refreshData();[m
+       resetUserForm();[m
+     } catch (e: any) {[m
+[31m-      alert("Erro ao salvar usuário: " + (e.message || "Erro desconhecido"));[m
+[32m+[m[32m      alert("Erro ao salvar usuário: " + (e.message || JSON.stringify(e)));[m
+     }[m
+     setLoading(false);[m
+   };[m
+[36m@@ -168,147 +207,68 @@[m [mexport const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser }) => {[m
+         <div>[m
+           <div className="p-4 bg-gray-50 border-b border-gray-100 flex justify-between items-center">[m
+             <p className="text-xs text-gray-500">Cadastre os funcionários para preencher a lista de presença automaticamente.</p>[m
+[31m-            <button[m
+[31m-              onClick={() => setIsAddingEmp(!isAddingEmp)}[m
+[31m-              className="bg-ciclus-600 text-white px-3 py-1.5 rounded text-sm font-medium

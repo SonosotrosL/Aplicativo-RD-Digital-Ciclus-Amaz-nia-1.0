@@ -1,48 +1,118 @@
-import ConectorSupabase from './ConectorSupabase';
-import { MapeadorDeDados } from './MapeadorDeDados';
+import { supabase } from '../../lib/supabaseClient';
 import { RDData, RDStatus } from '../../types';
 
 export class SincronizadorDeDados {
-    static async syncToSupabase(rd: RDData): Promise<boolean> {
-        const client = ConectorSupabase.client;
-        if (!client) return false;
-
+    /**
+     * Saves or updates an RD in the 'rd_registros' table.
+     */
+    static async syncToSupabase(rd: RDData): Promise<void> {
         try {
-            if (!rd.id) {
-                // Generate a random ID if not present
-                rd.id = `RD-${Date.now()}-${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
-            }
+            // Map to flat structure for DB + JSONB fields
+            const dbRecord = {
+                user_id: (await supabase.auth.getUser()).data.user?.id,
+                foreman_id: rd.foremanId,
+                foreman_name: rd.foremanName,
+                supervisor_id: rd.supervisorId,
+                supervisor_name: rd.supervisorName,
+                date: rd.date.split('T')[0], // Extract YYYY-MM-DD
+                team: rd.foremanTeam || rd.team,
+                shift: rd.shift,
+                category: rd.serviceCategory,
+                street: rd.street,
+                neighborhood: rd.neighborhood,
 
-            const payload = MapeadorDeDados.toSupabase(rd);
-            const { error } = await client.from('rds').upsert(payload);
+                // JSONB fields
+                // We store teamAttendance inside metrics to avoid schema change, and spatial data in location
+                metrics: {
+                    ...rd.metrics,
+                    teamAttendance: rd.teamAttendance
+                },
+                photos: {
+                    initial: rd.workPhotoInitial,
+                    progress: rd.workPhotoProgress,
+                    final: rd.workPhotoFinal
+                },
+                location: {
+                    ...rd.location,
+                    perimeter: rd.perimeter,
+                    segments: rd.segments
+                },
+                status: rd.status || 'Pendente',
+                supervisor_note: rd.supervisorNote
+            };
 
-            if (error) {
-                console.error('Erro de sincronização (Upload):', error);
-                return false;
+            // Check if it's an update (valid UUID) or insert
+            const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rd.id);
+
+            if (isUUID) {
+                // Update
+                const { error } = await supabase
+                    .from('rd_registros')
+                    .update(dbRecord)
+                    .eq('id', rd.id);
+                if (error) throw error;
+            } else {
+                // Insert
+                const { error } = await supabase
+                    .from('rd_registros')
+                    .insert(dbRecord);
+                if (error) throw error;
             }
-            return true;
         } catch (e) {
-            console.error('Exceção ao sincronizar:', e);
-            return false;
+            console.error('Erro ao salvar RD no Supabase:', e);
+            throw e;
         }
     }
 
     static async fetchFromSupabase(): Promise<RDData[]> {
-        const client = ConectorSupabase.client;
-        if (!client) return [];
-
         try {
-            const { data, error } = await client
-                .from('rds')
+            const { data, error } = await supabase
+                .from('rd_registros')
                 .select('*')
                 .order('created_at', { ascending: false });
 
             if (error) {
-                console.error('Erro de sincronização (Download):', error);
+                console.error('Erro ao buscar RDs:', error);
                 return [];
             }
 
-            return data.map(MapeadorDeDados.fromSupabase);
+            // Map back to RDData structure
+            return data.map((record: any) => ({
+                id: record.id,
+                date: record.date, // might need formatting?
+                team: record.team,
+                foremanId: record.foreman_id,
+                foremanName: record.foreman_name,
+                foremanTeam: record.team, // Assuming unified
+                supervisorId: record.supervisor_id,
+                supervisorName: record.supervisor_name,
+                shift: record.shift,
+                serviceCategory: record.category,
+                street: record.street,
+                neighborhood: record.neighborhood,
+
+                metrics: {
+                    capinaM: record.metrics?.capinaM || 0,
+                    pinturaViasM: record.metrics?.pinturaViasM || 0,
+                    pinturaPostesUnd: record.metrics?.pinturaPostesUnd || 0,
+                    rocagemM2: record.metrics?.rocagemM2 || 0
+                },
+                teamAttendance: record.metrics?.teamAttendance || [],
+
+                // Spatial / Extra
+                perimeter: record.location?.perimeter || '',
+                segments: record.location?.segments || [],
+                location: record.location, // Contains lat/lng + perimeter/segments
+
+                // Photos
+                workPhotoInitial: record.photos?.initial,
+                workPhotoProgress: record.photos?.progress,
+                workPhotoFinal: record.photos?.final,
+
+                status: record.status as RDStatus,
+                supervisorNote: record.supervisor_note || '',
+                createdAt: new Date(record.created_at).getTime()
+            }));
         } catch (e) {
             console.error('Exceção ao baixar dados:', e);
             return [];
@@ -50,20 +120,14 @@ export class SincronizadorDeDados {
     }
 
     static async deleteRD(id: string): Promise<boolean> {
-        const client = ConectorSupabase.client;
-        if (!client) return false;
-
-        const { error } = await client.from('rds').delete().eq('id', id);
+        const { error } = await supabase.from('rd_registros').delete().eq('id', id);
         return !error;
     }
 
     static subscribeToChanges(callback: () => void) {
-        const client = ConectorSupabase.client;
-        if (!client) return null;
-
-        return client
-            .channel('public:rds')
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'rds' }, () => {
+        return supabase
+            .channel('public:rd_registros')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'rd_registros' }, () => {
                 console.log('Mudança detectada no Supabase, atualizando...');
                 callback();
             })
